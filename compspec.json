@@ -1,0 +1,23 @@
+{
+  "meta": {
+    "name": "local test",
+    "id": "coinstac-local-test",
+    "version": "v1.0.0",
+    "repository": "github.com\/user\/computation.git",
+    "description": "a test that sums the last two numbers together for the next"
+  },
+  "computation": {
+    "type": "docker",
+    "dockerImage": "centos:7",
+    "command": [
+      "python",
+      "\/computation\/test.py"
+    ],
+    "input": {
+      "start": {
+        "type": "number"
+      }
+    }
+  }
+}
+
