@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-This layer includes the interface adapter(IA) for parsing json args to read ni pre-processing fMRI scans (accepts BIDS format)
+This layer includes the interface adapter(IA) for parsing json args to read structural T1w scans (formats:BIDS, nifti files, dicoms)
 This layer sends the output to fmri_use_cases_layer with the appropriate inputs to run the pipeine using nipype interface
 
-Sample run for bids input data:
-python3 run_fmri.py '{"input":{"opts":{"fwhm": 7}, "data":"/computation/test_dir/bids_input_data"}}'
+Sample run examples:
+python3 run_fmri.py {"options":{"value":6}, "registration_template":{"value":"/input/local0/simulatorRun/TPM.nii"}, "data":{"value":[["/input/local0/simulatorRun/3D_T1"]]}}
+3D_T1 contains T1w dicoms
 
-Sample run for input data of nifti paths in text or csv file:
-python3 run_fmri.py '{"input":{"opts":{"fwhm": 7}, "NiftiPaths":"/computation/test_dir/nifti_paths.txt"}}'
+python3 run_fmri.py python3 run_fmri.py {"options":{"value":6}, "registration_template":{"value":"/input/local0/simulatorRun/TPM.nii"}, "data":{"value":[["/input/local0/simulatorRun/sub1_t1w.nii","/input/local0/simulatorRun/sub1_t1w.nii.gz"]]}}
+
+python3 run_fmri.py {"options":{"value":6}, "registration_template":{"value":"/input/local0/simulatorRun/TPM.nii"}, "data":{"value":[["/input/local0/simulatorRun/BIDS_DIR"]]}}
+BIDS_DIR contains bids data
 
 success=True means program finished execution , despite the success or failure of the code
 This is to indicate to coinstac that program finished execution
 """
-
 import contextlib
 
 
@@ -44,75 +46,89 @@ def stdchannel_redirected(stdchannel, dest_filename):
 
 
 import ujson as json
-import warnings, os, glob, sys, shutil
+import warnings, os, glob, sys
 import nibabel as nib
-from bids.grabbids import BIDSLayout
 
-## Load Nipype spm interface ##
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore")
+# Load Nipype spm interface #
 from nipype.interfaces import spm
+import fmri_use_cases_layer
 
 #Stop printing nipype.workflow info to stdout
 from nipype import logging
 logging.getLogger('nipype.workflow').setLevel('CRITICAL')
 
-import fmri_use_cases_layer
-
-#Create a dict to store all paths to softwares,templates & store parameters, names of output files
+#Create a dictionary to store all paths to softwares,templates & store parameters, names of output files
 
 template_dict = {
     'spm_version':
-    '12.7169',
+    '12.7507',
     'matlab_cmd':
-    '/opt/spm12/run_spm12.sh /opt/mcr/v92 script',
+    '/opt/spm12/run_spm12.sh /opt/mcr/v95 script',
     'spm_path':
     '/opt/spm12/fsroot',
     'tpm_path':
-    '/opt/spm12/fsroot/spm/spm12/tpm/TPM.nii',
+    '/opt/spm12/fsroot/spm/spm12/toolbox/OldNorm/EPI.nii',
     'transf_mat_path':
     os.path.join('/computation', 'transform.mat'),
     'scan_type':
     'T1w',
-    'FWHM_SMOOTH': [6, 6, 6],
+    'FWHM_SMOOTH': [10, 10, 10],
+    'bounding_box':
+    '',
+    'reorient_params':
+    '',
     'BIAS_REGULARISATION':
     0.0001,
     'FWHM_GAUSSIAN_SMOOTH_BIAS':
     60,
     'fmri_output_dirname':
-    'fmri_spm12',
+        'fmri_spm12',
     'output_zip_dir':
-    'fmri_outputs',
+        'fmri_outputs',
     'display_image_name':
-    'wa.png',
+        'wa.png',
     'display_pngimage_name':
-    'Normalized Slicetime corrected Image',
+        'Normalized Slicetime corrected Image',
     'cut_coords': (0, 0, 0),
     'display_nifti':
-    'w*.nii',
+        'w*.nii',
     'qc_nifti':
-    'wa*nii',
+        'wa*nii',
     'fmri_qc_filename':
-    'QC_Framewise_displacement.txt',
+        'QC_Framewise_displacement.txt',
+    'outputs_manual_name':
+        'outputs_description.txt',
+    'coinstac_display_info':
+        'Please read outputs_description.txt for description of pre-processed output files and quality_control_readme.txt for quality control measurement.'
+        'These files are placed under the pre-processed data.',
     'bids_outputs_manual_name':
-    'outputs_description.txt',
+        'outputs_description.txt',
     'nifti_outputs_manual_name':
-    'outputs_description.txt',
+        'outputs_description.txt',
     'bids_outputs_manual_content':
-    "Prefixes descriptions for pre-processed images:"
-    "\na-Slicetime corrected\nw-Normalized\ns-Smoothed with fwhm(mm) [6 6 6]\nFor more info. please refer to spm12 manual here: "
-    "http://www.fil.ion.ucl.ac.uk/spm/doc/manual.pdf and release notes here: http://www.fil.ion.ucl.ac.uk/spm/software/spm12/SPM12_Release_Notes.pdf",
+        "Prefixes descriptions for pre-processed images:"
+        "\na-Slicetime corrected\nw-Normalized\ns-Smoothed with fwhm(mm) [6 6 6]\nFor more info. please refer to spm12 manual here: "
+        "http://www.fil.ion.ucl.ac.uk/spm/doc/manual.pdf and release notes here: http://www.fil.ion.ucl.ac.uk/spm/software/spm12/SPM12_Release_Notes.pdf",
     'nifti_outputs_manual_content':
-    "sub-1,sub-2,sub-* denotes each nifti file with respect to the order in the nifti paths given"
-    "Prefixes descriptions for segmented images:"
-    "\na-Slicetime corrected\nw-Normalized\ns-Smoothed with fwhm(mm) [6 6 6]\nFor more info. please refer to spm12 manual here: "
-    "http://www.fil.ion.ucl.ac.uk/spm/doc/manual.pdf and release notes here: http://www.fil.ion.ucl.ac.uk/spm/software/spm12/SPM12_Release_Notes.pdf",
+        "sub-1,sub-2,sub-* denotes each nifti file with respect to the order in the nifti paths given"
+        "Prefixes descriptions for segmented images:"
+        "\na-Slicetime corrected\nw-Normalized\ns-Smoothed with fwhm(mm) [6 6 6]\nFor more info. please refer to spm12 manual here: "
+        "http://www.fil.ion.ucl.ac.uk/spm/doc/manual.pdf and release notes here: http://www.fil.ion.ucl.ac.uk/spm/software/spm12/SPM12_Release_Notes.pdf",
+    'dicoms_outputs_manual_content':
+        "sub-1,sub-2,sub-* denotes each nifti file with respect to the order in the nifti paths given"
+        "Prefixes descriptions for segmented images:"
+        "\na-Slicetime corrected\nw-Normalized\ns-Smoothed with fwhm(mm) [6 6 6]\nFor more info. please refer to spm12 manual here: "
+        "http://www.fil.ion.ucl.ac.uk/spm/doc/manual.pdf and release notes here: http://www.fil.ion.ucl.ac.uk/spm/software/spm12/SPM12_Release_Notes.pdf",
     'qc_readme_name':
-    'quality_control_readme.txt',
+        'quality_control_readme.txt',
     'qc_readme_content':
-    "In each subject's func/fmri_spm12 directory,QC_Framewise_displacement.txt gives the mean of RMS of framewise displacement."
-    "\nFramewise Displacement of a time series is defined as the sum of the absolute values of the derivatives of the six realignment parameters."
-    "\nRotational displacements are converted from degrees to millimeters by calculating displacement on the surface of a sphere of radius 50 mm."
-    "\nFD = 0.15–0.2 mm: significant changes begin to be seen"
-    "\nFD > 0.5 mm: marked correlation changes observed"
+        "In each subject's func/fmri_spm12 directory,QC_Framewise_displacement.txt gives the mean of RMS of framewise displacement "
+        "\nFramewise Displacement of a time series is defined as the sum of the absolute values of the derivatives of the six realignment parameters "
+        "\nRotational displacements are converted from degrees to millimeters by calculating displacement on the surface of a sphere of radius 50 mm "
+        "\nFD = 0.15–0.2 mm: significant changes begin to be seen"
+        "\nFD > 0.5 mm: marked correlation changes observed"
 }
 """
 More info. on keys in template_dict
@@ -144,137 +160,7 @@ json output description
                     "display"-base64 encoded string of slicetime corrected normalized output nifti
 """
 with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-
-
-def process_bids(args):
-    """Runs the pre-processing pipeline on structural T1w scans in BIDS data
-        Args:
-            args (dictionary): {"input":{
-                                        "options": {
-                                                        "type": "integer",
-                                                        "label": "Smoothing value in mm",
-                                                        },
-                                        "data": {
-                                                        "type": "string",
-                                                        "label": "Input Bids Directory",
-                                                        }
-                                        }
-                                }
-        Returns:
-            computation_output (json): {"output": {
-                                                  "success": {
-                                                    "type": "boolean"
-                                                  },
-                                                   "message": {
-                                                    "type": "string"
-                                                  },
-                                                  "download_outputs": {
-                                                    "type": "string"
-                                                  },
-                                                   "display": {
-                                                    "type": "string"
-                                                  }
-                                                  }
-                                        }
-        Comments:
-            After verifying the BIDS format , the bids_dir along with pre-processing specific pipeline options
-            are sent to fmri_use_cases_layer for running the pipeline
-
-            The foll. args are used for reading from coinstac user directly, but for demo purposes we can read from args['state']['baseDirectory'] and args['state']['outputDirectory']
-    """
-    BidsDir = args['state']['baseDirectory']
-    WriteDir = args['state']['outputDirectory']
-
-    if ('options' in args['input']) and (args['input']['options']):
-        opts = args['input']['options']
-    else:
-        opts = None
-
-    return fmri_use_cases_layer.execute_pipeline(
-        bids_dir=BidsDir,
-        write_dir=WriteDir,
-        data_type='bids',
-        pipeline_opts=opts,
-        **template_dict)
-
-
-def process_niftis(args):
-    """Runs the pre-processing pipeline on fMRI nifti scans from paths in the text or csv file
-            Args:
-                args (dictionary): {"input":{
-                                            "NiftiFile": {
-                                                            "type": "string",
-                                                            "label": "text file with complete T1w nifti paths",
-                                                            },
-                                            "data": {
-                                                            "type": "string",
-                                                            "label": "Input Bids Directory",
-                                                            }
-                                            }
-                                    }
-            Returns:
-            computation_output (json): {"output": {
-                                                  "success": {
-                                                    "type": "boolean"
-                                                  },
-                                                   "message": {
-                                                    "type": "string"
-                                                  },
-                                                  "download_outputs": {
-                                                    "type": "string"
-                                                  },
-                                                   "display": {
-                                                    "type": "string"
-                                                  }
-                                                  }
-                                        }
-            Comments:
-                After verifying the nifti paths , the paths to nifti files and write_dir along with pre-processing specific pipeline options
-                are sent to fmri_use_cases_layer for running the pipeline
-
-                The foll. args are used for reading from coinstac user directly, but for demo purposes we can read from args['state']['baseDirectory'] and args['state']['outputDirectory']
-                paths_file = args['input']['NiftiPaths']
-                WriteDir = args['input']['WriteDir']
-
-            """
-    #Get paths to *.csv or *.txt files
-    nifti_paths_file = (
-        glob.glob(os.path.join(args['state']['baseDirectory'], '*.csv'))
-        or glob.glob(os.path.join(args['state']['baseDirectory'], '*.txt')))[0]
-    WriteDir = args['state']['outputDirectory']
-
-    if ('options' in args['input']) and (args['input']['options']):
-        opts = args['input']['options']
-    else:
-        opts = None
-
-    # Read each line in nifti_paths file into niftis variable
-    count = 0
-    valid_niftis = []
-
-    with open(nifti_paths_file, "r") as f:
-        for each in f:
-            if nib.load(each.rstrip(('\n'))):
-                valid_niftis.append(each.rstrip(('\n')))
-                count += 1
-    if count > 0 and os.access(WriteDir, os.W_OK):
-        return fmri_use_cases_layer.execute_pipeline(
-            nii_files=valid_niftis,
-            write_dir=WriteDir,
-            data_type='nifti',
-            pipeline_opts=opts,
-            **template_dict)
-    else:
-        return sys.stdout.write(
-            json.dumps({
-                "output": {
-                    "message":
-                    "No nifti files found or write directory does not have permissions"
-                },
-                "cache": {},
-                "success": True
-            }))
+    warnings.filterwarnings("ignore")
 
 
 def software_check():
@@ -285,34 +171,102 @@ def software_check():
     return (spm.SPMCommand().version)
 
 
-if __name__ == '__main__':
+def args_parser(args):
+    """ This function extracts options from arguments
+    """
+    if 'options' in args['input']:
+        template_dict['FWHM_SMOOTH'] = [float(args['input']['options'])]*3
 
-    # Check if spm is running
-    with stdchannel_redirected(sys.stderr, os.devnull):
-        spm_check = software_check()
-    if spm_check != template_dict['spm_version']:
-        raise EnvironmentError("spm unable to start in fmri docker")
+    if 'registration_template' in args['input']:
+        if os.path.isfile(args['input']['registration_template']) and (str(
+            ((nib.load(template_dict['tpm_path'])).shape)) == str(
+                ((nib.load(args['input']['registration_template'])).shape))):
+            template_dict['tpm_path'] = args['input']['registration_template']
+        else:
+            sys.stdout.write(
+                json.dumps({
+                    "output": {
+                        "message": "Non-standard Registration template "
+                    },
+                    "cache": {},
+                    "success": True
+                }))
+            sys.exit()
 
-    # The following block of code assigns the appropriate pre-processing function for input data format, based on Bids or nifti file paths in text file
-    args = json.loads(sys.stdin.read())
 
-    BidsDir = args['state']['baseDirectory']
+def data_parser(args):
+    """ This function parses the type of data i.e BIDS, nifti files or Dicoms
+    and passes them to fmri_use_cases_layer.py
+    """
+    data = args['input']['data']
     WriteDir = args['state']['outputDirectory']
 
-    # Check if data is in BIDS format and has T1w
-    layout = BIDSLayout(BidsDir)
 
-    if (len(layout.get(modality='func', extensions='.nii.gz')) >
-            0) and os.access(WriteDir, os.W_OK):
-        computation_output = process_bids(args)
+    # Check if data has nifti files
+    if [x
+          for x in data if os.path.isfile(x)] and os.access(WriteDir, os.W_OK):
+        nifti_paths = data
+        computation_output = fmri_use_cases_layer.setup_pipeline(
+            data=nifti_paths,
+            write_dir=WriteDir,
+            data_type='nifti',
+            **template_dict)
+        sys.stdout.write(computation_output)
+    # Check if data is BIDS
+    elif os.path.isfile(os.path.join(data[0],
+                                   'dataset_description.json')) and os.access(
+                                       WriteDir, os.W_OK):
+        cmd = "bids-validator {0}".format(data[0])
+        bids_process = os.popen(cmd).read()
+        bids_dir = data[0]
+        if bids_process and ('func' in bids_process) and (len(layout.get(modality='func', extensions='.nii.gz')) > 0):
+            computation_output = fmri_use_cases_layer.setup_pipeline(
+                data=bids_dir,
+                write_dir=WriteDir,
+                data_type='bids',
+                **template_dict)
+            sys.stdout.write(computation_output)
+    # Check if inputs are dicoms
+    elif [x
+          for x in data if os.path.isdir(x)] and os.access(WriteDir, os.W_OK):
+        dicom_dirs = list()
+        for dcm in data:
+            if os.path.isdir(dcm) and os.listdir(dcm):
+                dicom_file = glob.glob(dcm + '/*')[0]
+                with stdchannel_redirected(sys.stderr, os.devnull):
+                    dicom_header_info = os.popen('strings' + ' ' + dicom_file +
+                                                 '|grep DICM').read()
+                if 'DICM' in dicom_header_info: dicom_dirs.append(dcm)
+        computation_output = fmri_use_cases_layer.setup_pipeline(
+            data=dicom_dirs,
+            write_dir=WriteDir,
+            data_type='dicoms',
+            **template_dict)
         sys.stdout.write(computation_output)
     else:
         sys.stdout.write(
             json.dumps({
                 "output": {
                     "message":
-                    "Bids fmri data not found or can not write to target directory"
+                    "Input data not found/Can not write to target directory"
                 },
                 "cache": {},
                 "success": True
             }))
+
+
+if __name__ == '__main__':
+    # Check if spm is running
+    with stdchannel_redirected(sys.stderr, os.devnull):
+        spm_check = software_check()
+    if spm_check != template_dict['spm_version']:
+        raise EnvironmentError("spm unable to start in fmri docker")
+
+    #Read json args
+    args = json.loads(sys.stdin.read())
+
+    #Parse args
+    args_parser(args)
+
+    #Parse input data
+    data_parser(args)

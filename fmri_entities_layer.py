@@ -6,6 +6,7 @@ This layer defines the nodes of fmri pre-processing pipeline
 
 import nipype.pipeline.engine as pe
 import nipype.interfaces.spm as spm
+spm.terminal_output = 'file'
 from nipype.interfaces.io import DataSink
 
 #Stop printing nipype.workflow info to stdout

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-This layer runs the fmri pre-processing pipeline based on the inputs from interface adapter layer
+This layer runs the pre-processing fmri (Voxel Based Morphometry) pipeline based on the inputs from interface adapter layer
 This layer uses entities layer to modify nodes of the pipeline as needed
 """
-
 import contextlib
 
 
@@ -38,7 +37,10 @@ import sys, os, glob, shutil, math, base64, warnings
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore")
 import ujson as json
-from bids.grabbids import BIDSLayout
+
+# Load bids layout interface for parsing bids data to extract T1w scans,subject names etc.
+from bids import BIDSLayout
+
 import nibabel as nib
 import nipype.pipeline.engine as pe
 import numpy as np
@@ -51,66 +53,84 @@ from nipype import logging
 logging.getLogger('nipype.workflow').setLevel('CRITICAL')
 
 
-def execute_pipeline(bids_dir='',
-                     write_dir='',
-                     nii_files='',
-                     data_type=None,
-                     pipeline_opts=None,
-                     **template_dict):
-    """Runs the pre-processing pipeline on fmri scans in BIDS data
+def setup_pipeline(data='', write_dir='', data_type=None, **template_dict):
+    """setup the pre-processing pipeline on T1W scans
         Args:
-            bids_dir (string) : Input BIds directory
+            data (array) : Input data
             write_dir (string): Directory to write outputs
-            pipeline_opts ( integer) : Options to change pipeline
+            data_type (string): BIDS, niftis, dicoms
             template_dict ( dictionary) : Dictionary that stores all the paths, file names, software locations
         Returns:
             computation_output (json): {"output": {
                                                   "success": {
                                                     "type": "boolean"
                                                   },
-                                                   "fmridirs": {
-                                                    "type": "array",
-                                                    "contains": ["string"]
+                                                   "message": {
+                                                    "type": "string",
                                                   },
-                                                  "swafiles": {
-                                                    "type": "array",
-                                                    "contains": ["string"]
+                                                   "download_outputs": {
+                                                    "type": "string",
+                                                  },
+                                                   "display": {
+                                                    "type": "string",
                                                   }
                                                   }
                                         }
         Comments:
-            After setting up the pipeline here , the pipeline is run
+            After setting up the pipeline here , the pipeline is run with run_pipeline function
 
         """
-
-    [realign, slicetiming, datasink, fmri_preprocess] = create_pipeline_nodes(
-        pipeline_opts, **template_dict)
-
-    if data_type == 'bids':
-        # Runs the pipeline on each subject, this algorithm runs serially
-        layout = BIDSLayout(bids_dir)
-        fmri_data = layout.get(modality='func', extensions='.nii.gz')
-        return run_pipeline(
-            write_dir,
-            fmri_data,
-            realign,
-            slicetiming,
-            datasink,
-            fmri_preprocess,
-            data_type='bids',
+    try:
+        # Create pipeline nodes from fmri_entities_layer.py and pass them run_pipeline function
+        [realign, slicetiming, datasink, fmri_preprocess] = create_pipeline_nodes(
             **template_dict)
-    elif data_type == 'nifti':
-        # Runs the pipeline on each nifti file, this algorithm runs serially
-        fmri_data = nii_files
-        return run_pipeline(
-            write_dir,
-            fmri_data,
-            realign,
-            slicetiming,
-            datasink,
-            fmri_preprocess,
-            data_type='nifti',
-            **template_dict)
+        if data_type == 'bids':
+            # Runs the pipeline on each subject serially
+            layout = BIDSLayout(data)
+            smri_data = layout.get(
+                datatype='func', extensions='.nii.gz')
+            return run_pipeline(
+                write_dir,
+                smri_data,
+                realign,
+                slicetiming,
+                datasink,
+                fmri_preprocess,
+                data_type='bids',
+                **template_dict)
+        elif data_type == 'nifti':
+            # Runs the pipeline on each nifti file serially
+            smri_data = data
+            return run_pipeline(
+                write_dir,
+                smri_data,
+                realign,
+                slicetiming,
+                datasink,
+                fmri_preprocess,
+                data_type='nifti',
+                **template_dict)
+        elif data_type == 'dicoms':
+            # Runs the pipeline on each nifti file serially
+            smri_data = data
+            return run_pipeline(
+                write_dir,
+                smri_data,
+                realign,
+                slicetiming,
+                datasink,
+                fmri_preprocess,
+                data_type='dicoms',
+                **template_dict)
+    except Exception as e:
+        sys.stdout.write(
+            json.dumps({
+                "output": {
+                    "message": str(e)
+                },
+                "cache": {},
+                "success": True
+            }))
 
 
 def remove_tmp_files():
@@ -140,17 +160,21 @@ def write_readme_files(write_dir='', data_type=None, **template_dict):
     # Write a text file with info. on each of the output nifti files
     if data_type == 'bids':
         with open(
-                os.path.join(write_dir,
-                             template_dict['bids_outputs_manual_name']),
+                os.path.join(write_dir, template_dict['outputs_manual_name']),
                 'w') as fp:
             fp.write(template_dict['bids_outputs_manual_content'])
             fp.close()
     elif data_type == 'nifti':
         with open(
-                os.path.join(write_dir,
-                             template_dict['nifti_outputs_manual_name']),
+                os.path.join(write_dir, template_dict['outputs_manual_name']),
                 'w') as fp:
             fp.write(template_dict['nifti_outputs_manual_content'])
+            fp.close()
+    elif data_type == 'dicoms':
+        with open(
+                os.path.join(write_dir, template_dict['outputs_manual_name']),
+                'w') as fp:
+            fp.write(template_dict['dicoms_outputs_manual_content'])
             fp.close()
 
     # Write a text file with info. on quality control correlation coefficent
@@ -176,7 +200,7 @@ def calculate_FD(rp_text_file,**template_dict):
     # assume head radius of 50mm
     rot = realignment_parameters[:, rot_indices]
     rdist = rad * np.tan(rot)
-    realignment_parameters[:, rot_ind] = rdist
+    realignment_parameters[:, rot_indices] = rdist
     diff = np.diff(realignment_parameters, axis=0)
     FD_rms = np.sqrt(np.sum(diff**2, axis=1))
     FD_rms_mean = np.mean(FD_rms)
@@ -189,13 +213,13 @@ def calculate_FD(rp_text_file,**template_dict):
         fp.close()
 
 
-def nii_to_string_converter(input_dir, label, **template_dict):
+def nii_to_image_converter(write_dir, label, **template_dict):
     """This function converts nifti to base64 string"""
     import nibabel as nib
     from nilearn import plotting, image
     import os, base64
 
-    file = glob.glob(os.path.join(input_dir, template_dict['display_nifti']))
+    file = glob.glob(os.path.join(write_dir, template_dict['display_nifti']))
     mask = image.index_img(file[0], int(
         (image.load_img(file[0]).shape[3]) / 2))
     new_data = mask.get_data()
@@ -207,21 +231,20 @@ def nii_to_string_converter(input_dir, label, **template_dict):
         cut_coords=(0, 0, 0),
         annotate=False,
         draw_cross=False,
-        output_file=os.path.join(input_dir,
+        output_file=os.path.join(write_dir,
                                  template_dict['display_image_name']),
         display_mode='ortho',
         title=label + ' ' + template_dict['display_pngimage_name'],
         colorbar=False)
 
-
-def create_pipeline_nodes(pipeline_opts, **template_dict):
+def create_pipeline_nodes(**template_dict):
     """This function creates and modifies nodes of the pipeline from entities layer with nipype
 
-        smooth.node.inputs.fwhm: (a list of from 3 to 3 items which are a float or a float)
-        3-list of fwhm for each dimension
-        This is the size of the Gaussian (in mm) for smoothing the preprocessed data by. This is typically between about 4mm and 12mm.
+           smooth.node.inputs.fwhm: (a list of from 3 to 3 items which are a float or a float)
+           3-list of fwhm for each dimension
+           This is the size of the Gaussian (in mm) for smoothing the preprocessed data by. This is typically between about 4mm and 12mm.
 
-    """
+       """
 
     # 1 Realign node and settings #
     realign = fmri_entities_layer.Realign(**template_dict)
@@ -237,11 +260,6 @@ def create_pipeline_nodes(pipeline_opts, **template_dict):
 
     # 5 Datsink Node that collects swa files and writes to temp_write_dir #
     datasink = fmri_entities_layer.Datasink()
-
-    # 6 Modify Pipeline based on opts to update smoothing fwhm ( full width half maximum ) in mm in x,y,z directions
-    if pipeline_opts is not None:
-        fwhm = float(pipeline_opts)
-        smooth.node.inputs.fwhm = [fwhm] * 3
 
     ## 6 Create the pipeline/workflow and connect the nodes created above ##
     fmri_preprocess = pe.Workflow(name="fmri_preprocess")
@@ -295,49 +313,89 @@ def create_pipeline_nodes(pipeline_opts, **template_dict):
     ])
     return [realign, slicetiming, datasink, fmri_preprocess]
 
-
 def create_workflow_input(source, target, source_output, target_input):
+    """This function collects pipeline nodes and their connections
+    and returns them in appropriate format for nipype pipeline workflow
+    """
     return (source, target, [(source_output, target_input)])
 
 
+def smooth_images(write_dir,**template_dict):
+    """This function runs smoothing on input images. Ex: modulated images"""
+    from nipype.interfaces import spm
+    from nipype.interfaces.io import DataSink
+    smooth = pe.Node(interface=spm.Smooth(), name='smooth')
+    smooth.inputs.in_files = glob.glob(os.path.join(write_dir, 'mwc*.nii'))
+    smooth.inputs.fwhm = template_dict['FWHM_SMOOTH']
+    fmri_smooth_modulated_images = pe.Workflow(
+        name="fmri_smooth_modulated_images")
+    datasink = pe.Node(interface=DataSink(), name='datasink')
+    datasink.inputs.base_directory = write_dir
+    fmri_smooth_modulated_images.connect([(smooth, datasink, [('smoothed_files',
+                                                              write_dir)])])
+    with stdchannel_redirected(sys.stderr, os.devnull):
+        fmri_smooth_modulated_images.run()
+
+
 def run_pipeline(write_dir,
-                 fmri_data,
+                 smri_data,
                  realign,
                  slicetiming,
                  datasink,
                  fmri_preprocess,
                  data_type=None,
                  **template_dict):
-    """This function runs pipeline on the current case"""
+    """This function runs pipeline"""
 
     id = 0  # id for assigning sub-id incase of nifti files in txt format
+    loop_counter = 0  # loop counter
     count_success = 0  # variable for counting how many subjects were successfully run
-    write_dir = write_dir + '/' + template_dict['output_zip_dir']  # Store outputs in this directory for zipping the directory
-    error_log = dict()  # Dictionary for storing error log for each subject
+    write_dir = write_dir + '/' + template_dict[
+        'output_zip_dir']  # Store outputs in this directory for zipping the directory
+    error_log = dict()  # dict for storing error log
 
-    for each_sub in fmri_data:
+    for each_sub in smri_data:
+        loop_counter += 1
 
         try:
 
-            # Extract subject id and name of nifti file
+            # Assign subject,session id and input nifiti file for reorienation node
             if data_type == 'bids':
-                sub_id = 'sub-' + each_sub.subject
-                session_id = getattr(each_sub, 'session', None)
-
-                if session_id is not None:
-                    session = 'ses-' + getattr(each_sub, 'session', None)
+                sub_id = 'sub-' + each_sub.entities['subject']
+                if 'session' in each_sub.entities:
+                    session = each_sub.entities['session']
                 else:
                     session = ''
-
                 nii_output = ((
                     each_sub.filename).split('/')[-1]).split('.gz')[0]
-                n1_img = nib.load(each_sub.filename)
+                with stdchannel_redirected(sys.stderr, os.devnull):
+                    n1_img = nib.load(each_sub.filename)
 
             if data_type == 'nifti':
                 id = id + 1
-                sub_id = 'sub-' + str(id)
+                sub_id = 'subID-' + str(id)
+                session = ''
                 nii_output = ((each_sub).split('/')[-1]).split('.gz')[0]
-                n1_img = nib.load(each_sub)
+                with stdchannel_redirected(sys.stderr, os.devnull):
+                    n1_img = nib.load(each_sub)
+
+            if data_type == 'dicoms':
+                id = id + 1
+                sub_id = 'subID-' + str(id)
+                session = ''
+                fmri_out = os.path.join(write_dir, sub_id, session, 'func')
+                os.makedirs(fmri_out, exist_ok=True)
+
+                ## This code runs the dicom to nifti conversion here
+                from nipype.interfaces.dcm2nii import Dcm2niix
+                dcm_nii_convert =  Dcm2niix()
+                dcm_nii_convert.inputs.source_dir = each_sub
+                dcm_nii_convert.inputs.output_dir = fmri_out
+                with stdchannel_redirected(sys.stderr, os.devnull):
+                    dcm_nii_convert.run()
+                with stdchannel_redirected(sys.stderr, os.devnull):
+                    n1_img = nib.load(glob.glob(os.path.join(fmri_out, '*.nii*'))[0])
+                    nii_output=((glob.glob(os.path.join(fmri_out, '*.nii*'))[0]).split('/')[-1]).split('.gz')[0]
 
             # Directory in which fmri outputs will be written
             fmri_out = os.path.join(write_dir, sub_id, session, 'func')
@@ -345,16 +403,20 @@ def run_pipeline(write_dir,
             # Create output dir for sub_id
             os.makedirs(fmri_out, exist_ok=True)
 
-            nifti_file = os.path.join(fmri_out, nii_output)
-
             if n1_img:
+                """
+                Save nifti file from input data into output directory only if data_type !=dicoms because the dcm_nii_convert in the previous
+                step saves the nifti file to output directory
+                 """
                 nib.save(n1_img, os.path.join(fmri_out, nii_output))
 
                 # Create fmri_spm12 dir under the specific sub-id/func
                 os.makedirs(
-                    os.path.join(fmri_out,
-                                 template_dict['fmri_output_dirname']),
+                    os.path.join(fmri_out, template_dict['fmri_output_dirname']),
                     exist_ok=True)
+
+                nifti_file = glob.glob(os.path.join(fmri_out, '*.nii'))[0]
+
 
                 # Edit realign node inputs
                 realign.node.inputs.in_files = nifti_file
@@ -391,64 +453,83 @@ def run_pipeline(write_dir,
                 write_readme_files(write_dir, data_type, **template_dict)
 
                 label = sub_id + session
-                nii_to_string_converter(
-                    os.path.join(fmri_out,
-                                 template_dict['fmri_output_dirname']), label,
-                    **template_dict)
+                with stdchannel_redirected(sys.stderr, os.devnull):
+                    nii_to_image_converter(
+                        os.path.join(fmri_out,
+                                     template_dict['fmri_output_dirname']), label,
+                        **template_dict)
 
         except Exception as e:
-            # If fails raise the exception,print exception error
-            #sys.stderr.write(str(e))
+            # If the above code fails for any reason update the error log for the subject id
+            # ex: the nifti file is not a nifti file
+            # the input file is not a brian scan
             error_log.update({sub_id: str(e)})
             continue
 
         else:
-            # If the try block succeeds, increase the count
+
+            # If the try block succeeds, increase the  success count and save the wc1*nii as wc1.png
             count_success = count_success + 1
 
             if count_success == 1:
                 shutil.copy(
-                    os.path.join(fmri_out,
-                                 template_dict['fmri_output_dirname'],
+                    os.path.join(fmri_out, template_dict['fmri_output_dirname'],
                                  template_dict['display_image_name']),
                     os.path.dirname(write_dir))
 
         finally:
             remove_tmp_files()
 
-    #Zip output files
-    shutil.make_archive(
-        os.path.join(
-            os.path.dirname(write_dir), template_dict['output_zip_dir']),
-        'zip', write_dir)
-
-    #shutil.rmtree(write_dir, ignore_errors=True)
-    '''
-    Calculate how many nifti's successfully got run through the pipeline, this may help in colloborative projects
-    where some of the projects may have low quality data
-    '''
-
-    download_outputs_path = write_dir + '.zip'
-
-    output_message = "fMRI preprocessing completed. " + str(
-        count_success) + "/" + str(
-            len(fmri_data)) + " subjects" + " completed successfully."
-
-    if bool(error_log):
-        output_message = output_message + " Error log:" + str(error_log)
-
-    with open(
+    if os.path.isfile(
             os.path.join(
                 os.path.dirname(write_dir),
-                template_dict['display_image_name']), "rb") as imageFile:
-        encoded_image_str = base64.b64encode(imageFile.read())
+                template_dict['display_image_name'])):
+        #Zip output files
+        shutil.make_archive(
+            os.path.join(
+                os.path.dirname(write_dir), template_dict['output_zip_dir']),
+            'zip', write_dir)
 
-    return json.dumps({
-        "output": {
-            "message": output_message,
-            "download_outputs": download_outputs_path,
-            "display": encoded_image_str
-        },
-        "cache": {},
-        "success": True,
-    })
+        #Remove fmri_outputs directory if needed
+        #shutil.rmtree(write_dir, ignore_errors=True)
+
+        download_outputs_path = write_dir + '.zip'
+
+        output_message = "fmri preprocessing completed. " + str(
+            count_success) + "/" + str(
+                len(smri_data)
+            ) + " subjects" + " completed successfully." + template_dict[
+                'coinstac_display_info']
+
+        preprocessed_percentage = (count_success / len(smri_data)) * 100
+
+        # If preprocessed_percentage<=50 output qa warning, add this piece to FD qc
+
+        if bool(error_log):
+            output_message = output_message + " Error log:" + str(error_log)
+
+        # Convert wc1*.png
+        with open(
+                os.path.join(
+                    os.path.dirname(write_dir),
+                    template_dict['display_image_name']), "rb") as imageFile:
+            encoded_image_str = base64.b64encode(imageFile.read())
+
+        return json.dumps({
+            "output": {
+                "message": output_message,
+                "download_outputs": download_outputs_path,
+                "display": encoded_image_str
+            },
+            "cache": {},
+            "success": True
+        })
+    else:
+        # If the last file wc1*.png is not created for some reason in pre-processing
+        return json.dumps({
+            "output": {
+                "message": " Error log:" + str(error_log)
+            },
+            "cache": {},
+            "success": True
+        })
