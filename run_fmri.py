@@ -127,7 +127,7 @@ template_dict = {
         "In each subject's func/fmri_spm12 directory,QC_Framewise_displacement.txt gives the mean of RMS of framewise displacement "
         "\nFramewise Displacement of a time series is defined as the sum of the absolute values of the derivatives of the six realignment parameters "
         "\nRotational displacements are converted from degrees to millimeters by calculating displacement on the surface of a sphere of radius 50 mm "
-        "\nFD = 0.15–0.2 mm: significant changes begin to be seen"
+        "\nFD = 0.15 to 0.2 mm: significant changes begin to be seen"
         "\nFD > 0.5 mm: marked correlation changes observed"
 }
 """
