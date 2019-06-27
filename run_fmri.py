@@ -74,7 +74,7 @@ template_dict = {
     os.path.join('/computation', 'transform.mat'),
     'scan_type':
     'T1w',
-    'FWHM_SMOOTH': [10, 10, 10],
+    'FWHM_SMOOTH': [6, 6, 6],
     'options_reorient_params_x_mm': 0,
     'options_reorient_params_y_mm': 0,
     'options_reorient_params_z_mm': 0,
