@@ -33,7 +33,7 @@ def stdchannel_redirected(stdchannel, dest_filename):
             dest_file.close()
 
 
-import sys, os, glob, shutil, math, base64, warnings
+import sys, os, glob, shutil, math, base64, warnings, getopt, re,traceback
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore")
 import ujson as json
@@ -220,8 +220,9 @@ def nii_to_image_converter(write_dir, label, **template_dict):
     import os, base64
 
     file = glob.glob(os.path.join(write_dir, template_dict['display_nifti']))
-    mask = image.index_img(file[0], int(
-        (image.load_img(file[0]).shape[3]) / 2))
+    mask = nib.load(file[0])
+    # mask = image.index_img(file[0], int(
+    #     (image.load_img(file[0]).shape[3]) / 2))
     new_data = mask.get_data()
 
     clipped_img = nib.Nifti1Image(new_data, mask.affine, mask.header)
@@ -268,13 +269,13 @@ def create_pipeline_nodes(**template_dict):
         create_workflow_input(
             source=realign.node,
             target=normalize.node,
-            source_output='modified_in_files',
-            target_input='apply_to_files'),
+            source_output='mean_image',
+            target_input='image_to_align'),
         create_workflow_input(
             source=slicetiming.node,
             target=normalize.node,
             source_output='timecorrected_files',
-            target_input='image_to_align'),
+            target_input='apply_to_files'),
         create_workflow_input(
             source=normalize.node,
             target=smooth.node,
@@ -435,8 +436,11 @@ def run_pipeline(write_dir,
                 even = range(2, num_slices + 1, 2)
                 acq_order = list(odd) + list(even)
                 slicetiming.node.inputs.slice_order = acq_order
-                slicetiming.node.inputs.ref_slice = int(num_slices / 2)
-                #slicetiming.node.run()
+
+                if template_dict['options_slicetime_ref_slice'] is not None:
+                    slicetiming.node.inputs.ref_slice = template_dict['options_slicetime_ref_slice']
+                else:
+                    slicetiming.node.inputs.ref_slice = int(num_slices / 2)
 
                 # Edit datasink node inputs
                 datasink.node.inputs.base_directory = fmri_out
@@ -449,6 +453,15 @@ def run_pipeline(write_dir,
                 calculate_FD(glob.glob(os.path.join(fmri_out,
                              template_dict['fmri_output_dirname'],'rp*.txt'))[0],**template_dict)
 
+
+                # Rename wmean*nii and swmean*nii to wa*nii and swa*nii files. This is done due to align the naming convention to spm12 normalizing naming convention
+                wmean_filename = ((glob.glob(os.path.join(fmri_out, template_dict['fmri_output_dirname'], 'wmean*.nii'))[0]).split('/'))[-1]
+                swmean_filename = ((glob.glob(os.path.join(fmri_out, template_dict['fmri_output_dirname'], 'swmean*.nii'))[0]).split('/'))[-1]
+                new_wmean_filename = (wmean_filename.split('mean'))[0] + 'a' + (wmean_filename.split('mean'))[1]
+                new_swmean_filename = (swmean_filename.split('mean'))[0] + 'a' + (swmean_filename.split('mean'))[1]
+                shutil.move(os.path.join(fmri_out, template_dict['fmri_output_dirname'], wmean_filename),os.path.join(fmri_out, template_dict['fmri_output_dirname'], new_wmean_filename))
+                shutil.move(os.path.join(fmri_out, template_dict['fmri_output_dirname'], swmean_filename),os.path.join(fmri_out, template_dict['fmri_output_dirname'], new_swmean_filename))
+
                 # Write readme files
                 write_readme_files(write_dir, data_type, **template_dict)
 
@@ -459,11 +472,12 @@ def run_pipeline(write_dir,
                                      template_dict['fmri_output_dirname']), label,
                         **template_dict)
 
+
         except Exception as e:
             # If the above code fails for any reason update the error log for the subject id
             # ex: the nifti file is not a nifti file
             # the input file is not a brian scan
-            error_log.update({sub_id: str(e)})
+            error_log.update({sub_id: str(e)+str(traceback.format_exc())})
             continue
 
         else:

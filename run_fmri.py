@@ -45,7 +45,7 @@ def stdchannel_redirected(stdchannel, dest_filename):
             dest_file.close()
 
 
-import ujson as json
+import ujson as json,getopt, re,traceback
 import warnings, os, glob, sys
 import nibabel as nib
 
@@ -75,10 +75,34 @@ template_dict = {
     'scan_type':
     'T1w',
     'FWHM_SMOOTH': [10, 10, 10],
-    'bounding_box':
-    '',
-    'reorient_params':
-    '',
+    'options_reorient_params_x_mm': 0,
+    'options_reorient_params_y_mm': 0,
+    'options_reorient_params_z_mm': 0,
+    'options_reorient_params_pitch': 0,
+    'options_reorient_params_roll': 0,
+    'options_reorient_params_yaw': 0,
+    'options_reorient_params_x_scaling': 1,
+    'options_reorient_params_y_scaling': 1,
+    'options_reorient_params_z_scaling': 1,
+    'options_reorient_params_x_affine': 0,
+    'options_reorient_params_y_affine': 0,
+    'options_reorient_params_z_affine': 0,
+    'options_realign_fwhm': 8,
+    'options_realign_interp': 2,
+    'options_options_realign_quality': 1,
+    'options_realign_register_to_mean': True,
+    'options_realign_separation': 4,
+    'options_realign_wrap': [0, 0, 0],
+    'options_realign_write_interp': 4,
+    'options_realign_write_mask': True,
+    'options_realign_write_which': [2, 1],
+    'options_realign_write_wrap': [0, 0, 0],
+    'options_slicetime_ref_slice': None,
+    'options_normalize_affine_regularization_type': 'mni',
+    'options_normalize_write_bounding_box': [[-78, -112, -70], [78, 76, 85]],
+    'options_normalize_write_interp': 1,
+    'options_normalize_write_voxel_sizes': [3, 3, 3],
+    "options_smoothing_implicit_masking": False,
     'BIAS_REGULARISATION':
     0.0001,
     'FWHM_GAUSSIAN_SMOOTH_BIAS':
@@ -174,14 +198,81 @@ def software_check():
 def args_parser(args):
     """ This function extracts options from arguments
     """
-    if 'options' in args['input']:
-        template_dict['FWHM_SMOOTH'] = [float(args['input']['options'])]*3
+    if 'options_reorient_params_x_mm' in args['input']:
+        template_dict['options_reorient_params_x_mm'] = float(args['input']['options_reorient_params_x_mm'])
+    if 'options_reorient_params_y_mm' in args['input']:
+        template_dict['options_reorient_params_y_mm'] = float(args['input']['options_reorient_params_y_mm'])
+    if 'options_reorient_params_z_mm' in args['input']:
+        template_dict['options_reorient_params_z_mm'] = float(args['input']['options_reorient_params_z_mm'])
+    if 'options_reorient_params_pitch' in args['input']:
+        template_dict['options_reorient_params_pitch'] = float((args['input']['options_reorient_params_pitch']))
+    if 'options_reorient_params_roll' in args['input']:
+        template_dict['options_reorient_params_roll'] = float((args['input']['options_reorient_params_roll']))
+    if 'options_reorient_params_yaw' in args['input']:
+        template_dict['options_reorient_params_yaw'] = float((args['input']['options_reorient_params_yaw']))
+    if 'options_reorient_params_x_scaling' in args['input']:
+        template_dict['options_reorient_params_x_scaling'] = float(args['input']['options_reorient_params_x_scaling'])
+    if 'options_reorient_params_y_scaling' in args['input']:
+        template_dict['options_reorient_params_y_scaling'] = float(args['input']['options_reorient_params_y_scaling'])
+    if 'options_reorient_params_z_scaling' in args['input']:
+        template_dict['options_reorient_params_z_scaling'] = float(args['input']['options_reorient_params_z_scaling'])
+    if 'options_reorient_params_x_affine' in args['input']:
+        template_dict['options_reorient_params_x_affine'] = float(args['input']['options_reorient_params_x_affine'])
+    if 'options_reorient_params_y_affine' in args['input']:
+        template_dict['options_reorient_params_y_affine'] = float(args['input']['options_reorient_params_y_affine'])
+    if 'options_reorient_params_z_affine' in args['input']:
+        template_dict['options_reorient_params_z_affine'] = float(args['input']['options_reorient_params_z_affine'])
 
-    if 'registration_template' in args['input']:
-        if os.path.isfile(args['input']['registration_template']) and (str(
+
+    if 'options_realign_fwhm' in args['input']:
+        template_dict['options_realign_fwhm']=args['input']['options_realign_fwhm']
+    if 'options_realign_interp' in args['input']:
+        template_dict['options_realign_interp']=args['input']['options_realign_interp']
+    if 'options_realign_quality' in args['input']:
+        template_dict['options_realign_quality']=args['input']['options_realign_quality']
+    if 'options_realign_register_to_mean' in args['input']:
+        template_dict['options_realign_register_to_mean']=args['input']['options_realign_register_to_mean']
+    if 'options_realign_separation' in args['input']:
+        template_dict['options_realign_separation']=args['input']['options_realign_separation']
+    if 'options_realign_wrap' in args['input']:
+        template_dict['options_realign_wrap']=args['input']['options_realign_wrap']
+    if 'options_realign_write_interp' in args['input']:
+        template_dict['options_realign_write_interp']=args['input']['options_realign_write_interp']
+    if 'options_realign_write_mask' in args['input']:
+        template_dict['options_realign_write_mask']=args['input']['options_realign_write_mask']
+    if 'options_realign_write_which' in args['input']:
+        template_dict['options_realign_write_which']=args['input']['options_realign_write_which']
+    if 'options_realign_write_wrap' in args['input']:
+        template_dict['options_realign_write_wrap']=args['input']['options_realign_write_wrap']
+
+    if 'options_slicetime_ref_slice' in args['input']:
+        template_dict['options_slicetime_ref_slice']=args['input']['options_slicetime_ref_slice']
+
+    if 'options_normalize_affine_regularization_type' in args['input']:
+        template_dict['options_normalize_affine_regularization_type']=args['input']['options_normalize_affine_regularization_type']
+    if 'options_normalize_write_bounding_box' in args['input']:
+        template_dict['options_normalize_write_bounding_box']=args['input']['options_normalize_write_bounding_box']
+    if 'options_normalize_write_interp' in args['input']:
+        template_dict['options_normalize_write_interp']=int(args['input']['options_normalize_write_interp'])
+    if 'options_normalize_write_voxel_sizes' in args['input']:
+        template_dict['options_normalize_write_voxel_sizes']=args['input']['options_normalize_write_voxel_sizes']
+
+
+    if 'options_smoothing_x_mm' in args['input']:
+         template_dict['FWHM_SMOOTH'][0]= float(args['input']['options_smoothing_x_mm'])
+    if 'options_smoothing_y_mm' in args['input']:
+         template_dict['FWHM_SMOOTH'][1]= float(args['input']['options_smoothing_y_mm'])
+    if 'options_smoothing_z_mm' in args['input']:
+        template_dict['FWHM_SMOOTH'][2] = float(args['input']['options_smoothing_z_mm'])
+
+    if 'options_smoothing_implicit_masking' in args['input']:
+        template_dict['options_implicit_masking']=args['input']['options_smoothing_implicit_masking']
+
+    if 'options_registration_template' in args['input']:
+        if os.path.isfile(args['input']['options_registration_template']) and (str(
             ((nib.load(template_dict['tpm_path'])).shape)) == str(
-                ((nib.load(args['input']['registration_template'])).shape))):
-            template_dict['tpm_path'] = args['input']['registration_template']
+                ((nib.load(args['input']['options_registration_template'])).shape))):
+            template_dict['tpm_path'] = args['input']['options_registration_template']
         else:
             sys.stdout.write(
                 json.dumps({
@@ -256,17 +347,21 @@ def data_parser(args):
 
 
 if __name__ == '__main__':
-    # Check if spm is running
-    with stdchannel_redirected(sys.stderr, os.devnull):
-        spm_check = software_check()
-    if spm_check != template_dict['spm_version']:
-        raise EnvironmentError("spm unable to start in fmri docker")
 
-    #Read json args
-    args = json.loads(sys.stdin.read())
+    try:
+        # Check if spm is running
+        with stdchannel_redirected(sys.stderr, os.devnull):
+            spm_check = software_check()
+        if spm_check != template_dict['spm_version']:
+            raise EnvironmentError("spm unable to start in fmri docker")
 
-    #Parse args
-    args_parser(args)
+        #Read json args
+        args = json.loads(sys.stdin.read())
 
-    #Parse input data
-    data_parser(args)
+        #Parse args
+        args_parser(args)
+
+        #Parse input data
+        data_parser(args)
+    except Exception as e:
+        sys.stderr.write('Unable to pre-process data. Error_log:' + str(e) + str(traceback.format_exc()))
