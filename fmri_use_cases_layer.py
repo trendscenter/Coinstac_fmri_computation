@@ -220,9 +220,9 @@ def nii_to_image_converter(write_dir, label, **template_dict):
     import os, base64
 
     file = glob.glob(os.path.join(write_dir, template_dict['display_nifti']))
-    mask = nib.load(file[0])
-    # mask = image.index_img(file[0], int(
-    #     (image.load_img(file[0]).shape[3]) / 2))
+    # mask = nib.load(file[0])
+    mask = image.index_img(file[0], int(
+        (image.load_img(file[0]).shape[3]) / 2))
     new_data = mask.get_data()
 
     clipped_img = nib.Nifti1Image(new_data, mask.affine, mask.header)
@@ -269,13 +269,13 @@ def create_pipeline_nodes(**template_dict):
         create_workflow_input(
             source=realign.node,
             target=normalize.node,
-            source_output='mean_image',
-            target_input='image_to_align'),
+            source_output='modified_in_files',
+            target_input='apply_to_files'),
         create_workflow_input(
             source=slicetiming.node,
             target=normalize.node,
             source_output='timecorrected_files',
-            target_input='apply_to_files'),
+            target_input='image_to_align'),
         create_workflow_input(
             source=normalize.node,
             target=smooth.node,
@@ -454,13 +454,13 @@ def run_pipeline(write_dir,
                              template_dict['fmri_output_dirname'],'rp*.txt'))[0],**template_dict)
 
 
-                # Rename wmean*nii and swmean*nii to wa*nii and swa*nii files. This is done due to align the naming convention to spm12 normalizing naming convention
-                wmean_filename = ((glob.glob(os.path.join(fmri_out, template_dict['fmri_output_dirname'], 'wmean*.nii'))[0]).split('/'))[-1]
-                swmean_filename = ((glob.glob(os.path.join(fmri_out, template_dict['fmri_output_dirname'], 'swmean*.nii'))[0]).split('/'))[-1]
-                new_wmean_filename = (wmean_filename.split('mean'))[0] + 'a' + (wmean_filename.split('mean'))[1]
-                new_swmean_filename = (swmean_filename.split('mean'))[0] + 'a' + (swmean_filename.split('mean'))[1]
-                shutil.move(os.path.join(fmri_out, template_dict['fmri_output_dirname'], wmean_filename),os.path.join(fmri_out, template_dict['fmri_output_dirname'], new_wmean_filename))
-                shutil.move(os.path.join(fmri_out, template_dict['fmri_output_dirname'], swmean_filename),os.path.join(fmri_out, template_dict['fmri_output_dirname'], new_swmean_filename))
+                # # Rename wmean*nii and swmean*nii to wa*nii and swa*nii files. This is done due to align the naming convention to spm12 normalizing naming convention
+                # wmean_filename = ((glob.glob(os.path.join(fmri_out, template_dict['fmri_output_dirname'], 'wmean*.nii'))[0]).split('/'))[-1]
+                # swmean_filename = ((glob.glob(os.path.join(fmri_out, template_dict['fmri_output_dirname'], 'swmean*.nii'))[0]).split('/'))[-1]
+                # new_wmean_filename = (wmean_filename.split('mean'))[0] + 'a' + (wmean_filename.split('mean'))[1]
+                # new_swmean_filename = (swmean_filename.split('mean'))[0] + 'a' + (swmean_filename.split('mean'))[1]
+                # shutil.move(os.path.join(fmri_out, template_dict['fmri_output_dirname'], wmean_filename),os.path.join(fmri_out, template_dict['fmri_output_dirname'], new_wmean_filename))
+                # shutil.move(os.path.join(fmri_out, template_dict['fmri_output_dirname'], swmean_filename),os.path.join(fmri_out, template_dict['fmri_output_dirname'], new_swmean_filename))
 
                 # Write readme files
                 write_readme_files(write_dir, data_type, **template_dict)
