@@ -11,10 +11,7 @@ import contextlib
 def stdchannel_redirected(stdchannel, dest_filename):
     """
     A context manager to temporarily redirect stdout or stderr
-
     e.g.:
-
-
     with stdchannel_redirected(sys.stderr, os.devnull):
         if compiler.has_function('clock_gettime', libraries=['rt']):
             libraries.append('rt')
@@ -78,7 +75,6 @@ def setup_pipeline(data='', write_dir='', data_type=None, **template_dict):
                                         }
         Comments:
             After setting up the pipeline here , the pipeline is run with run_pipeline function
-
         """
     try:
         # Create pipeline nodes from fmri_entities_layer.py and pass them run_pipeline function
@@ -240,11 +236,9 @@ def nii_to_image_converter(write_dir, label, **template_dict):
 
 def create_pipeline_nodes(**template_dict):
     """This function creates and modifies nodes of the pipeline from entities layer with nipype
-
            smooth.node.inputs.fwhm: (a list of from 3 to 3 items which are a float or a float)
            3-list of fwhm for each dimension
            This is the size of the Gaussian (in mm) for smoothing the preprocessed data by. This is typically between about 4mm and 12mm.
-
        """
 
     # 1 Realign node and settings #
@@ -269,17 +263,17 @@ def create_pipeline_nodes(**template_dict):
         create_workflow_input(
             source=realign.node,
             target=normalize.node,
-            source_output='modified_in_files',
-            target_input='apply_to_files'),
+            source_output='mean_image',
+            target_input='image_to_align'),
         create_workflow_input(
             source=slicetiming.node,
             target=normalize.node,
             source_output='timecorrected_files',
-            target_input='image_to_align'),
+            target_input='apply_to_files'),
         create_workflow_input(
             source=normalize.node,
             target=smooth.node,
-            source_output='normalized_image',
+            source_output='normalized_files',
             target_input='in_files'),
         create_workflow_input(
             source=realign.node,
@@ -304,7 +298,7 @@ def create_pipeline_nodes(**template_dict):
         create_workflow_input(
             source=normalize.node,
             target=datasink.node,
-            source_output='normalized_image',
+            source_output='normalized_files',
             target_input=template_dict['fmri_output_dirname'] + '.@4'),
         create_workflow_input(
             source=smooth.node,
@@ -320,6 +314,19 @@ def create_workflow_input(source, target, source_output, target_input):
     """
     return (source, target, [(source_output, target_input)])
 
+def convert_and_run_reorient_script(input_file):
+    from pathlib2 import Path
+    import shutil
+    from nipype.interfaces import spm
+    shutil.copy('/computation/reorient_template.m', '/computation/reorient.m')
+    path = Path('/computation/reorient.m')
+    text = path.read_text()
+    text = text.replace('input_file', input_file)
+    path.write_text(text)
+    # Run convert_to_mat_file.m script using spm12 standalone and Matlab MCR
+    with stdchannel_redirected(sys.stderr, os.devnull):
+        spm.SPMCommand.set_mlab_paths(matlab_cmd='/opt/spm12/run_spm12.sh /opt/mcr/v95 script /computation/reorient_job.m',
+                                  use_mcr=True)
 
 def smooth_images(write_dir,**template_dict):
     """This function runs smoothing on input images. Ex: modulated images"""
@@ -418,6 +425,12 @@ def run_pipeline(write_dir,
 
                 nifti_file = glob.glob(os.path.join(fmri_out, '*.nii'))[0]
 
+                # run reorientation node and pass to realign
+                try:
+                    with stdchannel_redirected(sys.stderr, os.devnull):
+                        convert_and_run_reorient_script(nifti_file)
+                except:
+                    pass
 
                 # Edit realign node inputs
                 realign.node.inputs.in_files = nifti_file

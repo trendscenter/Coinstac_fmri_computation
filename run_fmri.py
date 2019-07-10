@@ -3,16 +3,12 @@
 """
 This layer includes the interface adapter(IA) for parsing json args to read structural T1w scans (formats:BIDS, nifti files, dicoms)
 This layer sends the output to fmri_use_cases_layer with the appropriate inputs to run the pipeine using nipype interface
-
 Sample run examples:
 python3 run_fmri.py {"options":{"value":6}, "registration_template":{"value":"/input/local0/simulatorRun/TPM.nii"}, "data":{"value":[["/input/local0/simulatorRun/3D_T1"]]}}
 3D_T1 contains T1w dicoms
-
 python3 run_fmri.py python3 run_fmri.py {"options":{"value":6}, "registration_template":{"value":"/input/local0/simulatorRun/TPM.nii"}, "data":{"value":[["/input/local0/simulatorRun/sub1_t1w.nii","/input/local0/simulatorRun/sub1_t1w.nii.gz"]]}}
-
 python3 run_fmri.py {"options":{"value":6}, "registration_template":{"value":"/input/local0/simulatorRun/TPM.nii"}, "data":{"value":[["/input/local0/simulatorRun/BIDS_DIR"]]}}
 BIDS_DIR contains bids data
-
 success=True means program finished execution , despite the success or failure of the code
 This is to indicate to coinstac that program finished execution
 """
@@ -23,10 +19,7 @@ import contextlib
 def stdchannel_redirected(stdchannel, dest_filename):
     """
     A context manager to temporarily redirect stdout or stderr
-
     e.g.:
-
-
     with stdchannel_redirected(sys.stderr, os.devnull):
         if compiler.has_function('clock_gettime', libraries=['rt']):
             libraries.append('rt')
@@ -156,7 +149,6 @@ template_dict = {
 }
 """
 More info. on keys in template_dict
-
 spm_path is path to spm software inside docker . 
 SPM is Statistical Parametric Mapping toolbox for matlab 
 Info. from http://www.fil.ion.ucl.ac.uk/spm/
@@ -165,19 +157,16 @@ These ideas have been instantiated in software that is called SPM.
 The SPM software package has been designed for the analysis of brain imaging data sequences. 
 The sequences can be a series of images from different cohorts, or time-series from the same subject. 
 The current release is designed for the analysis of fMRI, PET, SPECT, EEG and MEG."
-
 tpm_path is the path where the SPM structural template nifti file is stored
 This file is used to :
 1) Perform segmentation in the fmri pipeline
 2) Compute correlation value to smoothed, warped grey matter from output of pipeline, which is stored in the fmri_qc_filename
-
 transf_mat_path is the path to the transformation matrix used in running the reorient step of the pipeline
 scan_type is the type of structural scans on which is accepted by this pipeline
 FWHM_SMOOTH is the full width half maximum smoothing kernel value in mm in x,y,z directions
 fmri_output_dirname is the name of the output directory to which the outputs from this pipeline are written to
 fmri_qc_filename is the name of the fmri quality control text file , which is placed in fmri_output_dirname
 FWHM_SMOOTH is an optional parameter that can be passed as json in args['input']['opts']
-
 json output description
                     "message"-This string is used by coinstac to display output message to the user on the UI after computation is finished
                     "download_outputs"-Zipped directory where outputs are stored
@@ -284,6 +273,30 @@ def args_parser(args):
                 }))
             sys.exit()
 
+def convert_reorientparams_save_to_mat_script():
+    from pathlib2 import Path
+    import shutil
+    shutil.copy('/computation/convert_to_mat_file_template.m', '/computation/convert_to_mat_file.m')
+    path = Path('/computation/convert_to_mat_file.m')
+    text = path.read_text()
+    text = text.replace('x_mm', str(template_dict['options_reorient_params_x_mm']))
+    text = text.replace('y_mm', str(template_dict['options_reorient_params_y_mm']))
+    text = text.replace('z_mm', str(template_dict['options_reorient_params_z_mm']))
+    text = text.replace('pitch', str(template_dict['options_reorient_params_pitch']))
+    text = text.replace('roll', str(template_dict['options_reorient_params_roll']))
+    text = text.replace('yaw', str(template_dict['options_reorient_params_yaw']))
+    text = text.replace('x_scaling', str(template_dict['options_reorient_params_x_scaling']))
+    text = text.replace('y_scaling', str(template_dict['options_reorient_params_y_scaling']))
+    text = text.replace('z_scaling', str(template_dict['options_reorient_params_z_scaling']))
+    text = text.replace('x_affine', str(template_dict['options_reorient_params_x_affine']))
+    text = text.replace('y_affine', str(template_dict['options_reorient_params_y_affine']))
+    text = text.replace('z_affine', str(template_dict['options_reorient_params_z_affine']))
+    path.write_text(text)
+    # Run convert_to_mat_file.m script using spm12 standalone and Matlab MCR
+    with stdchannel_redirected(sys.stderr, os.devnull):
+        spm.SPMCommand.set_mlab_paths(matlab_cmd='/opt/spm12/run_spm12.sh /opt/mcr/v95 script /computation/convert_to_mat_file.m',
+                                  use_mcr=True)
+
 
 def data_parser(args):
     """ This function parses the type of data i.e BIDS, nifti files or Dicoms
@@ -354,6 +367,14 @@ if __name__ == '__main__':
             spm_check = software_check()
         if spm_check != template_dict['spm_version']:
             raise EnvironmentError("spm unable to start in fmri docker")
+
+        # Code to convert input reorient params options to transform.mat for reorientation, try,except,pass statement is just to supress the error its printing out.
+        # Have not been able to come up with a more elegant solution yet. Already tried to supress warnings etc.
+        # try:
+        #      with stdchannel_redirected(sys.stderr, os.devnull):
+        #         convert_reorientparams_save_to_mat_script()
+        # except:
+        #      pass
 
         #Read json args
         args = json.loads(sys.stdin.read())
