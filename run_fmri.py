@@ -91,6 +91,9 @@ template_dict = {
     'options_realign_write_which': [2, 1],
     'options_realign_write_wrap': [0, 0, 0],
     'options_slicetime_ref_slice': None,
+    'options_num_slices': None,
+    'options_repetition_time': None,
+    'options_acquisition_order': None,
     'options_normalize_affine_regularization_type': 'mni',
     'options_normalize_write_bounding_box': [[-78, -112, -70], [78, 76, 85]],
     'options_normalize_write_interp': 1,
@@ -236,6 +239,12 @@ def args_parser(args):
 
     if 'options_slicetime_ref_slice' in args['input']:
         template_dict['options_slicetime_ref_slice']=args['input']['options_slicetime_ref_slice']
+    if 'options_num_slices' in args['input']:
+        template_dict['options_num_slices']=args['input']['options_num_slices']
+    if 'options_repetition_time' in args['input']:
+        template_dict['options_repetition_time']=args['input']['options_repetition_time']
+    if 'options_acquisition_order' in args['input']:
+        template_dict['options_acquisition_order']=args['input']['options_acquisition_order']
 
     if 'options_normalize_affine_regularization_type' in args['input']:
         template_dict['options_normalize_affine_regularization_type']=args['input']['options_normalize_affine_regularization_type']

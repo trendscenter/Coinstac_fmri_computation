@@ -437,6 +437,14 @@ def run_pipeline(write_dir,
                 #realign.node.inputs.out_file = fmri_out + "/" + template_dict['fmri_output_dirname'] + "/Re.nii"
                 #realign.node.run()
 
+                if template_dict['options_slicetime_ref_slice'] is not None: slicetiming.node.inputs.ref_slice = template_dict[
+                    'options_slicetime_ref_slice']
+                if template_dict['options_num_slices'] is not None: slicetiming.node.inputs.num_slices = template_dict[
+                    'options_num_slices']
+                if template_dict['options_repetition_time'] is not None: TR = template_dict['options_repetition_time']
+                if template_dict['options_acquisition_order'] is not None: acq_order = template_dict['options_acquisition_order']
+
+
                 # Edit Slicetiming node inputs
                 TR = n1_img.header.get_zooms()[-1]
                 num_slices = n1_img.shape[2]
@@ -450,10 +458,6 @@ def run_pipeline(write_dir,
                 acq_order = list(odd) + list(even)
                 slicetiming.node.inputs.slice_order = acq_order
 
-                if template_dict['options_slicetime_ref_slice'] is not None:
-                    slicetiming.node.inputs.ref_slice = template_dict['options_slicetime_ref_slice']
-                else:
-                    slicetiming.node.inputs.ref_slice = int(num_slices / 2)
 
                 # Edit datasink node inputs
                 datasink.node.inputs.base_directory = fmri_out
