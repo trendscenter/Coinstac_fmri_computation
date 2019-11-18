@@ -150,7 +150,7 @@ def remove_tmp_files():
         os.remove(os.getcwd() + '/pyscript.m')
 
 
-def write_readme_files(write_dir='', data_type=None, log=None,**template_dict):
+def write_readme_files(write_dir='', data_type=None, **template_dict):
     """This function writes readme files"""
 
     # Write a text file with info. on each of the output nifti files
@@ -179,11 +179,6 @@ def write_readme_files(write_dir='', data_type=None, log=None,**template_dict):
         fp.write(template_dict['qc_readme_content'])
         fp.close()
 
-    # Write log of fmri output
-    with open(os.path.join(write_dir, template_dict['log_filename']),
-              'w') as fp:
-        fp.write(log)
-        fp.close()
 
 
 def calculate_FD(rp_text_file,write_dir, sub_id,**template_dict):
@@ -221,7 +216,7 @@ def calculate_FD(rp_text_file,write_dir, sub_id,**template_dict):
                 'w') as fp:
             fp.write("%s\n" % (sub_id))
             fp.close()
-    return FD_rms_mean
+
 
 def nii_to_image_converter(write_dir, label, **template_dict):
     """This function converts nifti to base64 string"""
@@ -247,39 +242,6 @@ def nii_to_image_converter(write_dir, label, **template_dict):
         display_mode='ortho',
         title=label + ' ' + template_dict['display_pngimage_name'],
         colorbar=False)
-
-def resample_nifti_images(image_file, voxel_dimensions, resample_method):
-    """Resample the NIfTI images in a folder and put them in a new folder
-    Args:
-        images_location: Path where the images are stored
-        voxel_dimension: tuple (dx, dy, dz)
-        resample_method: NN - Nearest neighbor
-                         Li - Linear interpolation
-    Returns:
-        None:
-    """
-    try:
-        voxel_size_str = '_{:.0f}mm'.format(float(voxel_dimensions[0]))
-        (file_name, file_ext) = os.path.splitext(image_file)
-        new_file_name = ''.join([file_name, voxel_size_str, file_ext])
-
-        resample = afni.Resample()
-        resample.inputs.environ = {'AFNI_NIFTI_TYPE_WARN': 'NO'}
-        resample.inputs.in_file = image_file
-        resample.inputs.out_file = os.path.join(os.path.dirname(image_file), new_file_name)
-        resample.inputs.voxel_size = voxel_dimensions
-        resample.inputs.outputtype = 'NIFTI'
-        resample.inputs.resample_mode = resample_method
-        resample.run()
-
-        #Delete the image_file as we only use the resampled image
-        if os.path.exists(image_file):os.remove(image_file)
-
-    except Exception as e:
-        sys.stderr.write('Unable to resample regression input file Error_log:' + str(e)+str(traceback.format_exc()))
-
-    return os.path.join(os.path.dirname(image_file), new_file_name)
-
 
 def create_pipeline_nodes(**template_dict):
     """This function creates and modifies nodes of the pipeline from entities layer with nipype
@@ -402,17 +364,9 @@ def run_pipeline(write_dir,
                  **template_dict):
     """This function runs pipeline"""
 
-    unwanted_indexes = list()  # list to store indices of subjects which do not pass QA
-    outputDirectory = write_dir
     id = 0  # id for assigning sub-id incase of nifti files in txt format
     loop_counter = 0  # loop counter
     count_success = 0  # variable for counting how many subjects were successfully run
-
-    # Create regression_input_files to store input files for performing regression
-    regression_input_dir=write_dir + '/' + template_dict[
-        'regression_dir_name']
-    os.makedirs(regression_input_dir,exist_ok=True)
-
     write_dir = write_dir + '/' + template_dict[
         'output_zip_dir']  # Store outputs in this directory for zipping the directory
     error_log = dict()  # dict for storing error log
@@ -525,7 +479,7 @@ def run_pipeline(write_dir,
                     fmri_preprocess.run()
 
                 # Motion quality control: Calculate Framewise Displacement
-                FD_rms_mean=calculate_FD(glob.glob(os.path.join(fmri_out,
+                calculate_FD(glob.glob(os.path.join(fmri_out,
                              template_dict['fmri_output_dirname'],'rp*.txt'))[0],write_dir,sub_id,**template_dict)
 
 
@@ -537,6 +491,8 @@ def run_pipeline(write_dir,
                 # shutil.move(os.path.join(fmri_out, template_dict['fmri_output_dirname'], wmean_filename),os.path.join(fmri_out, template_dict['fmri_output_dirname'], new_wmean_filename))
                 # shutil.move(os.path.join(fmri_out, template_dict['fmri_output_dirname'], swmean_filename),os.path.join(fmri_out, template_dict['fmri_output_dirname'], new_swmean_filename))
 
+                # Write readme files
+                write_readme_files(write_dir, data_type, **template_dict)
 
                 label = sub_id + session
                 with stdchannel_redirected(sys.stderr, os.devnull):
@@ -551,7 +507,6 @@ def run_pipeline(write_dir,
             # ex: the nifti file is not a nifti file
             # the input file is not a brian scan
             error_log.update({sub_id: str(e)+str(traceback.format_exc())})
-            unwanted_indexes.append(loop_counter)
             continue
 
         else:
@@ -565,35 +520,8 @@ def run_pipeline(write_dir,
                                  template_dict['display_image_name']),
                     os.path.dirname(write_dir))
 
-            # Copy regression input files to regression_input_dir
-            shutil.copy(os.path.join(glob.glob(
-                os.path.join(fmri_out, template_dict['fmri_output_dirname'],
-                             template_dict['regression_file_input_type'] + '*.nii'))[0]),
-                        os.path.join(regression_input_dir,
-                                     sub_id + session + '_' + template_dict['regression_file_input_type'] + '.nii'))
-
-            if template_dict['regression_resample_voxel_size'] is not None:
-                # Resample regression file input images for performing regression (for demo purposes)
-                regression_resampled_file = resample_nifti_images(os.path.join(regression_input_dir,
-                                                                               sub_id + session + '_' + template_dict[
-                                                                                   'regression_file_input_type'] + '.nii'),
-                                                                  template_dict['regression_resample_voxel_size'],
-                                                                  template_dict['regression_resample_method'])
-
-            if round(FD_rms_mean,2) > template_dict['FD_rms_mean_threshold']: unwanted_indexes.append(loop_counter)
-
-            regression_resampled_file=glob.glob(os.path.join(regression_input_dir,sub_id + session + '_' + template_dict['regression_file_input_type'] + '.nii'))[0]
-
-            template_dict['covariates'][0][0][loop_counter][0] = (regression_resampled_file).replace(outputDirectory+'/','')
-            template_dict['regression_data'][0][loop_counter-1] = (regression_resampled_file).replace(outputDirectory + '/','')
-
         finally:
             remove_tmp_files()
-
-    template_dict['covariates'][0][0]=[v for i, v in enumerate(template_dict['covariates'][0][0]) if i not in unwanted_indexes]
-    template_dict['regression_data'][0] = [v for i, v in enumerate(template_dict['regression_data'][0]) if
-                                         i not in [b-1 for b in unwanted_indexes] ]
-
 
     if os.path.isfile(
             os.path.join(
@@ -610,7 +538,7 @@ def run_pipeline(write_dir,
 
         download_outputs_path = write_dir + '.zip'
 
-        output_message = "fMRI preprocessing completed. Download zipped output file here:" +download_outputs_path+" " +str(
+        output_message = "fmri preprocessing completed. " + str(
             count_success) + "/" + str(
                 len(smri_data)
             ) + " subjects completed successfully." + template_dict[
@@ -635,32 +563,28 @@ def run_pipeline(write_dir,
         if bool(error_log):
             output_message = output_message + " Error log:" + str(error_log)
 
-        # Write readme files
-        write_readme_files(write_dir, data_type, output_message, **template_dict)
+        # Convert wc1*.png
+        with open(
+                os.path.join(
+                    os.path.dirname(write_dir),
+                    template_dict['display_image_name']), "rb") as imageFile:
+            encoded_image_str = base64.b64encode(imageFile.read())
 
-        if preprocessed_percentage>template_dict['qc_threshold']:
-            return json.dumps({
-                "output": {
-                    "covariates":template_dict['covariates'],
-                    "data":template_dict['regression_data']
-                },
-                "cache": {},
-                "success": True
-            })
-        else:
-            return json.dumps({
-                "output": {
-                    "message": output_message
-                },
-                "cache": {},
-                "success": True
-            })
-    else:
         return json.dumps({
             "output": {
-                "message": "None of the input data could be pre-processed. Please check the data!"
+                "message": output_message,
+                "download_outputs": download_outputs_path,
+                "display": encoded_image_str
             },
             "cache": {},
             "success": True
         })
-
+    else:
+        # If the last file wc1*.png is not created for some reason in pre-processing
+        return json.dumps({
+            "output": {
+                "message": " Error log:" + str(error_log)
+            },
+            "cache": {},
+            "success": True
+        })

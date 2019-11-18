@@ -41,12 +41,13 @@ def stdchannel_redirected(stdchannel, dest_filename):
 import ujson as json,getopt, re,traceback
 import warnings, os, glob, sys
 import nibabel as nib
+import numpy as np, scipy.io, spm_matrix as s
 
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore")
 # Load Nipype spm interface #
 from nipype.interfaces import spm
-import fmri_use_cases_layer
+import fmri_use_cases_layer,fmri_standalone_use_cases_layer
 
 #Stop printing nipype.workflow info to stdout
 from nipype import logging
@@ -67,6 +68,19 @@ template_dict = {
     os.path.join('/computation', 'transform.mat'),
     'scan_type':
     'T1w',
+    'standalone': False,
+    'covariates': list(),
+    'regression_data': list(),
+    'regression_file_input_type':
+        'swa',
+    'regression_dir_name':
+        'regression_input_files',
+    'regression_file':
+        'swa.nii',
+    'regression_resample_voxel_size':
+        None,
+    'regression_resample_method':
+        'Li',
     'FWHM_SMOOTH': [6, 6, 6],
     'options_reorient_params_x_mm': 0,
     'options_reorient_params_y_mm': 0,
@@ -82,7 +96,7 @@ template_dict = {
     'options_reorient_params_z_affine': 0,
     'options_realign_fwhm': 8,
     'options_realign_interp': 2,
-    'options_options_realign_quality': 1,
+    'options_realign_quality': 1,
     'options_realign_register_to_mean': True,
     'options_realign_separation': 4,
     'options_realign_wrap': [0, 0, 0],
@@ -107,6 +121,10 @@ template_dict = {
         'fmri_spm12',
     'output_zip_dir':
         'fmri_outputs',
+    'log_filename':
+        'fmri_log.txt',
+    'qa_flagged_filename':
+        'QA_flagged_subjects.txt',
     'display_image_name':
         'wa.png',
     'display_pngimage_name':
@@ -116,6 +134,10 @@ template_dict = {
         'w*.nii',
     'qc_nifti':
         'wa*nii',
+    'qc_threshold':
+        70,
+    'FD_rms_mean_threshold':
+    0.2, #in mm
     'fmri_qc_filename':
         'QC_Framewise_displacement.txt',
     'outputs_manual_name':
@@ -123,6 +145,8 @@ template_dict = {
     'coinstac_display_info':
         'Please read outputs_description.txt for description of pre-processed output files and quality_control_readme.txt for quality control measurement.'
         'These files are placed under the pre-processed data.',
+    'flag_warning':
+        ' QC warning: Atleast 30% of input data did not pass QA or could not be pre-processed, please check the data, vbm_log.txt and QA_flagged_subjects.txt',
     'bids_outputs_manual_name':
         'outputs_description.txt',
     'nifti_outputs_manual_name':
@@ -190,6 +214,33 @@ def software_check():
 def args_parser(args):
     """ This function extracts options from arguments
     """
+
+    if args['input']['standalone']:
+        template_dict['standalone'] = args['input']['standalone']
+    else:
+        template_dict['covariates'] = args['input']['covariates']
+        template_dict['regression_data'] = args['input']['data']
+        template_dict['regression_file_input_type'] = args['input']['regression_file_input_type']
+
+    if 'regression_resample_voxel_size' in args['input']:
+        template_dict['regression_resample_voxel_size']=tuple([float(args['input']['regression_resample_voxel_size'])]*3)
+
+    if 'registration_template' in args['input']:
+        if os.path.isfile(args['input']['registration_template']) and (str(
+                ((nib.load(template_dict['tpm_path'])).shape)) == str(
+            ((nib.load(args['input']['registration_template'])).shape))):
+            template_dict['tpm_path'] = args['input']['registration_template']
+        else:
+            sys.stdout.write(
+                json.dumps({
+                    "output": {
+                        "message": "Non-standard Registration template "
+                    },
+                    "cache": {},
+                    "success": True
+                }))
+            sys.exit()
+
     if 'options_reorient_params_x_mm' in args['input']:
         template_dict['options_reorient_params_x_mm'] = float(args['input']['options_reorient_params_x_mm'])
     if 'options_reorient_params_y_mm' in args['input']:
@@ -283,89 +334,151 @@ def args_parser(args):
             sys.exit()
 
 def convert_reorientparams_save_to_mat_script():
-    from pathlib2 import Path
-    import shutil
-    shutil.copy('/computation/convert_to_mat_file_template.m', '/computation/convert_to_mat_file.m')
-    path = Path('/computation/convert_to_mat_file.m')
-    text = path.read_text()
-    text = text.replace('x_mm', str(template_dict['options_reorient_params_x_mm']))
-    text = text.replace('y_mm', str(template_dict['options_reorient_params_y_mm']))
-    text = text.replace('z_mm', str(template_dict['options_reorient_params_z_mm']))
-    text = text.replace('pitch', str(template_dict['options_reorient_params_pitch']))
-    text = text.replace('roll', str(template_dict['options_reorient_params_roll']))
-    text = text.replace('yaw', str(template_dict['options_reorient_params_yaw']))
-    text = text.replace('x_scaling', str(template_dict['options_reorient_params_x_scaling']))
-    text = text.replace('y_scaling', str(template_dict['options_reorient_params_y_scaling']))
-    text = text.replace('z_scaling', str(template_dict['options_reorient_params_z_scaling']))
-    text = text.replace('x_affine', str(template_dict['options_reorient_params_x_affine']))
-    text = text.replace('y_affine', str(template_dict['options_reorient_params_y_affine']))
-    text = text.replace('z_affine', str(template_dict['options_reorient_params_z_affine']))
-    path.write_text(text)
-    # Run convert_to_mat_file.m script using spm12 standalone and Matlab MCR
-    with stdchannel_redirected(sys.stderr, os.devnull):
-        spm.SPMCommand.set_mlab_paths(matlab_cmd='/opt/spm12/run_spm12.sh /opt/mcr/v95 script /computation/convert_to_mat_file.m',
-                                  use_mcr=True)
+    try:
+        pi = 22 / 7
+        scipy.io.savemat('/computation/transform.mat',
+                         mdict={'M': np.around(s.spm_matrix([template_dict['options_reorient_params_x_mm'],
+                                                             template_dict['options_reorient_params_y_mm'],
+                                                             template_dict['options_reorient_params_z_mm'],
+                                                             template_dict['options_reorient_params_pitch'] * (
+                                                                         pi / 180),
+                                                             template_dict['options_reorient_params_roll'] * (pi / 180),
+                                                             template_dict['options_reorient_params_yaw'] * (pi / 180),
+                                                             template_dict['options_reorient_params_x_scaling'],
+                                                             template_dict['options_reorient_params_y_scaling'],
+                                                             template_dict['options_reorient_params_z_scaling'],
+                                                             template_dict['options_reorient_params_x_affine'],
+                                                             template_dict['options_reorient_params_y_affine'],
+                                                             template_dict['options_reorient_params_z_affine']], 1),
+                                               decimals=4)[0]})
+    except Exception as e:
+        sys.stderr.write('Unable to convert reorientation params to transform.mat Error_log:'+str(e)+str(traceback.format_exc()))
 
 
 def data_parser(args):
     """ This function parses the type of data i.e BIDS, nifti files or Dicoms
     and passes them to fmri_use_cases_layer.py
     """
-    data = args['input']['data']
+    if template_dict['standalone']:
+        data = [args['state']['baseDirectory'] + '/' + file_names for file_names in args['input']['data']]
+    else:
+        data = [args['state']['baseDirectory'] + '/' + subject[0] for subject in args['input']['covariates'][0][0][1:]]
+
     WriteDir = args['state']['outputDirectory']
 
-
-    # Check if data has nifti files
-    if [x
-          for x in data if os.path.isfile(x)] and os.access(WriteDir, os.W_OK):
-        nifti_paths = data
-        computation_output = fmri_use_cases_layer.setup_pipeline(
-            data=nifti_paths,
-            write_dir=WriteDir,
-            data_type='nifti',
-            **template_dict)
-        sys.stdout.write(computation_output)
-    # Check if data is BIDS
-    elif os.path.isfile(os.path.join(data[0],
-                                   'dataset_description.json')) and os.access(
-                                       WriteDir, os.W_OK):
-        cmd = "bids-validator {0}".format(data[0])
-        bids_process = os.popen(cmd).read()
-        bids_dir = data[0]
-        if bids_process and ('func' in bids_process) and (len(layout.get(modality='func', extensions='.nii.gz')) > 0):
-            computation_output = fmri_use_cases_layer.setup_pipeline(
-                data=bids_dir,
+    if template_dict['standalone']:
+        # Check if data has nifti files
+        if [x
+              for x in data if os.path.isfile(x)] and os.access(WriteDir, os.W_OK):
+            nifti_paths = data
+            computation_output = fmri_standalone_use_cases_layer.setup_pipeline(
+                data=nifti_paths,
                 write_dir=WriteDir,
-                data_type='bids',
+                data_type='nifti',
                 **template_dict)
             sys.stdout.write(computation_output)
-    # Check if inputs are dicoms
-    elif [x
-          for x in data if os.path.isdir(x)] and os.access(WriteDir, os.W_OK):
-        dicom_dirs = list()
-        for dcm in data:
-            if os.path.isdir(dcm) and os.listdir(dcm):
-                dicom_file = glob.glob(dcm + '/*')[0]
-                with stdchannel_redirected(sys.stderr, os.devnull):
-                    dicom_header_info = os.popen('strings' + ' ' + dicom_file +
-                                                 '|grep DICM').read()
-                if 'DICM' in dicom_header_info: dicom_dirs.append(dcm)
-        computation_output = fmri_use_cases_layer.setup_pipeline(
-            data=dicom_dirs,
-            write_dir=WriteDir,
-            data_type='dicoms',
-            **template_dict)
-        sys.stdout.write(computation_output)
+        # Check if data is BIDS
+        elif os.path.isfile(os.path.join(data[0],
+                                       'dataset_description.json')) and os.access(
+                                           WriteDir, os.W_OK):
+            cmd = "bids-validator {0}".format(data[0])
+            bids_process = os.popen(cmd).read()
+            bids_dir = data[0]
+            if bids_process and ('func' in bids_process) and (len(layout.get(modality='func', extensions='.nii.gz')) > 0):
+                computation_output = fmri_standalone_use_cases_layer.setup_pipeline(
+                    data=bids_dir,
+                    write_dir=WriteDir,
+                    data_type='bids',
+                    **template_dict)
+                sys.stdout.write(computation_output)
+        # Check if inputs are dicoms
+        elif [x
+              for x in data if os.path.isdir(x)] and os.access(WriteDir, os.W_OK):
+            dicom_dirs = list()
+            for dcm in data:
+                if os.path.isdir(dcm) and os.listdir(dcm):
+                    dicom_file = glob.glob(dcm + '/*')[0]
+                    with stdchannel_redirected(sys.stderr, os.devnull):
+                        dicom_header_info = os.popen('strings' + ' ' + dicom_file +
+                                                     '|grep DICM').read()
+                    if 'DICM' in dicom_header_info: dicom_dirs.append(dcm)
+            computation_output = fmri_standalone_use_cases_layer.setup_pipeline(
+                data=dicom_dirs,
+                write_dir=WriteDir,
+                data_type='dicoms',
+                **template_dict)
+            sys.stdout.write(computation_output)
+        else:
+            sys.stdout.write(
+                json.dumps({
+                    "output": {
+                        "message":
+                            "Input data given: " + str(data) + " Read permissions for input data: " + str(
+                                os.access(data[0], os.R_OK)) + " Write dir: " + str(
+                                WriteDir) + " Write permissions for WriteDir: " + str(
+                                os.access(WriteDir,
+                                          os.W_OK)) + " Input data not found/Can not write to target directory"
+                    },
+                    "cache": {},
+                    "success": True
+                }))
     else:
-        sys.stdout.write(
-            json.dumps({
-                "output": {
-                    "message":
-                    "Input data not found/Can not write to target directory"
-                },
-                "cache": {},
-                "success": True
-            }))
+        # Check if data has nifti files
+        if [x
+            for x in data if os.path.isfile(x)] and os.access(WriteDir, os.W_OK):
+            nifti_paths = data
+            computation_output = fmri_use_cases_layer.setup_pipeline(
+                data=nifti_paths,
+                write_dir=WriteDir,
+                data_type='nifti',
+                **template_dict)
+            sys.stdout.write(computation_output)
+        # Check if data is BIDS
+        elif os.path.isfile(os.path.join(data[0],
+                                         'dataset_description.json')) and os.access(
+            WriteDir, os.W_OK):
+            cmd = "bids-validator {0}".format(data[0])
+            bids_process = os.popen(cmd).read()
+            bids_dir = data[0]
+            if bids_process and ('func' in bids_process) and (
+                    len(layout.get(modality='func', extensions='.nii.gz')) > 0):
+                computation_output = fmri_use_cases_layer.setup_pipeline(
+                    data=bids_dir,
+                    write_dir=WriteDir,
+                    data_type='bids',
+                    **template_dict)
+                sys.stdout.write(computation_output)
+        # Check if inputs are dicoms
+        elif [x
+              for x in data if os.path.isdir(x)] and os.access(WriteDir, os.W_OK):
+            dicom_dirs = list()
+            for dcm in data:
+                if os.path.isdir(dcm) and os.listdir(dcm):
+                    dicom_file = glob.glob(dcm + '/*')[0]
+                    with stdchannel_redirected(sys.stderr, os.devnull):
+                        dicom_header_info = os.popen('strings' + ' ' + dicom_file +
+                                                     '|grep DICM').read()
+                    if 'DICM' in dicom_header_info: dicom_dirs.append(dcm)
+            computation_output = fmri_use_cases_layer.setup_pipeline(
+                data=dicom_dirs,
+                write_dir=WriteDir,
+                data_type='dicoms',
+                **template_dict)
+            sys.stdout.write(computation_output)
+        else:
+            sys.stdout.write(
+                json.dumps({
+                    "output": {
+                        "message":
+                            "Input data given: " + str(data) + " Read permissions for input data: " + str(
+                                os.access(data[0], os.R_OK)) + " Write dir: " + str(
+                                WriteDir) + " Write permissions for WriteDir: " + str(
+                                os.access(WriteDir,
+                                          os.W_OK)) + " Input data not found/Can not write to target directory"
+                    },
+                    "cache": {},
+                    "success": True
+                }))
 
 
 if __name__ == '__main__':
@@ -377,21 +490,16 @@ if __name__ == '__main__':
         if spm_check != template_dict['spm_version']:
             raise EnvironmentError("spm unable to start in fmri docker")
 
-        # Code to convert input reorient params options to transform.mat for reorientation, try,except,pass statement is just to supress the error its printing out.
-        # Have not been able to come up with a more elegant solution yet. Already tried to supress warnings etc.
-        # try:
-        #      with stdchannel_redirected(sys.stderr, os.devnull):
-        #         convert_reorientparams_save_to_mat_script()
-        # except:
-        #      pass
-
         #Read json args
         args = json.loads(sys.stdin.read())
 
         #Parse args
         args_parser(args)
 
-        #Parse input data
+        #Convert reorient params to mat file if they exist
+        convert_reorientparams_save_to_mat_script()
+
+        #Parse input data and run the code
         data_parser(args)
     except Exception as e:
-        sys.stderr.write('Unable to pre-process data. Error_log:' + str(e) + str(traceback.format_exc()))
+        sys.stderr.write('Unable to read input data or parse inputspec.json. Error_log:' + str(e) + str(traceback.format_exc()))
