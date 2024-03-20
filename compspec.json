@@ -10,7 +10,7 @@
   },
   "computation": {
     "type": "docker",
-   "dockerImage": "fmri_coinstac",
+   "dockerImage": "run_fmripre",
     "command": [
       "python",
       "\/computation\/run_fmri.py"
